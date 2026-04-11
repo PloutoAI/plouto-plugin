@@ -216,19 +216,22 @@ def _post(url: str, token: str, payload: dict, retries: int = 3) -> dict:
 # ─── Sync ────────────────────────────────────────────────────────────
 
 
+BATCH_TURNS = 200  # flush when turn buffer hits this size
+
+
 def sync(api_url: str, token: str, root: Path, session_filter: str | None = None):
-    """Walk JSONL session files and POST metadata to Scalene."""
+    """Walk JSONL files, buffer turns, flush in batches of ~200."""
+    import time
     identity = _get_identity()
     ingest_url = f"{api_url.rstrip('/')}/api/ingest/sessions"
 
-    print(f"Scalene Sync")
+    print("Scalene Sync")
     print(f"  api:  {api_url}")
     print(f"  root: {root}")
     if identity:
         print(f"  user: {identity.get('email', '?')}")
     print()
 
-    # Discover files first.
     all_files = list(_find_session_files(root))
     print(f"Found {len(all_files)} JSONL files")
 
@@ -236,17 +239,36 @@ def sync(api_url: str, token: str, root: Path, session_filter: str | None = None
     turns_total = 0
     batches_sent = 0
     errors = 0
-
-    # Dedup across subagent files (they share UUIDs with parent).
     seen_sessions: set[str] = set()
     seen_turns: set[str] = set()
+
+    # Buffers — flushed when turn_buf hits BATCH_TURNS.
+    session_buf: list[dict] = []
+    turn_buf: list[dict] = []
+
+    def _flush():
+        nonlocal sessions_total, turns_total, batches_sent, errors
+        if not session_buf and not turn_buf:
+            return
+        payload: dict = {"sessions": session_buf[:], "turns": turn_buf[:]}
+        if identity:
+            payload["agent_identity"] = identity
+        result = _post(ingest_url, token, payload)
+        s = result.get("sessions_upserted", 0)
+        t = result.get("turns_upserted", 0)
+        sessions_total += s
+        turns_total += t
+        batches_sent += 1
+        if not result:
+            errors += 1
+        print(f"  batch {batches_sent}: {len(session_buf)}s {len(turn_buf)}t → {s}s {t}t")
+        session_buf.clear()
+        turn_buf.clear()
+        time.sleep(0.2)
 
     for i, jsonl_path in enumerate(all_files):
         if session_filter and session_filter not in str(jsonl_path):
             continue
-
-        sessions: list[dict] = []
-        turns: list[dict] = []
 
         for line in _iter_jsonl(jsonl_path):
             sm = _extract_session(line)
@@ -257,39 +279,24 @@ def sync(api_url: str, token: str, root: Path, session_filter: str | None = None
                 sm["jsonl_offset"] = 0
                 sm["total_turns"] = 0
                 sm["is_subagent"] = 0
-                sessions.append(sm)
+                session_buf.append(sm)
 
             tm = _extract_turn(line)
             if tm and tm["uuid"] not in seen_turns:
                 seen_turns.add(tm["uuid"])
-                turns.append(tm)
+                turn_buf.append(tm)
 
-        if not sessions and not turns:
-            continue
+            if len(turn_buf) >= BATCH_TURNS:
+                _flush()
 
-        payload: dict = {"sessions": sessions, "turns": turns}
-        if identity:
-            payload["agent_identity"] = identity
+        if (i + 1) % 200 == 0:
+            print(f"  scanned {i + 1}/{len(all_files)} files...")
 
-        import time
-        result = _post(ingest_url, token, payload)
-        s = result.get("sessions_upserted", 0)
-        t = result.get("turns_upserted", 0)
-        sessions_total += s
-        turns_total += t
-        batches_sent += 1
-        if not result:
-            errors += 1
-
-        # Progress every 10 batches.
-        if batches_sent % 10 == 0:
-            print(f"  [{batches_sent}] {sessions_total} sessions, {turns_total} turns so far...")
-
-        # Rate limit: 200ms between batches to avoid overwhelming the server.
-        time.sleep(0.2)
+    # Final flush.
+    _flush()
 
     print()
-    print(f"Done. {sessions_total} sessions, {turns_total} turns synced in {batches_sent} batches.")
+    print(f"Done. {sessions_total} sessions, {turns_total} turns in {batches_sent} batches.")
     if errors:
         print(f"  {errors} batches had errors.")
     return sessions_total, turns_total
