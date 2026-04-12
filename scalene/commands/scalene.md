@@ -13,37 +13,41 @@ The sync script is at `${CLAUDE_PLUGIN_ROOT}/bin/scalene-sync.py`. Credentials a
 
 ### /scalene setup
 
-Do NOT show menus, pickers, or multi-step wizards. Do this automatically:
+CRITICAL: You MUST follow these exact steps. Do NOT ask the user to paste credentials. Do NOT show menus. Do NOT improvise. Execute these bash commands in order:
 
-1. Check if already configured:
-   ```bash
-   echo "URL=${SCALENE_API_URL:-}" && echo "TOKEN=${SCALENE_TOKEN:-}"
-   ```
-   If both are set, say "Already configured. Dashboard: <url>" and stop.
+Step 1 — check if already configured:
+```bash
+echo "URL=${SCALENE_API_URL:-}" && echo "TOKEN=${SCALENE_TOKEN:-}"
+```
+If both are set (not empty), say "Already configured." and stop.
 
-2. Start the device auth flow. Run:
-   ```bash
-   curl -s -X POST https://getscalene.com/api/cli/auth
-   ```
-   This returns JSON: `{"code": "ABC123", "url": "https://getscalene.com/cli/confirm?code=ABC123"}`
+Step 2 — start device auth. Run this EXACT command:
+```bash
+curl -s -X POST https://getscalene.com/api/cli/auth
+```
+Parse the JSON response to get `code` and `url`.
 
-3. Tell the user: "Opening your browser to confirm..." and run:
-   ```bash
-   open "<url from step 2>"
-   ```
+Step 3 — open browser. Run:
+```bash
+open "<the url from step 2>"
+```
+Tell the user: "Confirm in your browser..."
 
-4. Poll until confirmed (every 2 seconds, max 60 attempts):
-   ```bash
-   curl -s "https://getscalene.com/api/cli/poll?code=<code>"
-   ```
-   Response will be `{"status": "pending"}` until the user confirms in the browser, then `{"status": "confirmed", "api_url": "...", "token": "..."}`.
+Step 4 — poll for confirmation. Run this in a loop (sleep 2 between, max 30 tries):
+```bash
+curl -s "https://getscalene.com/api/cli/poll?code=<the code from step 2>"
+```
+Keep polling until response contains `"status":"confirmed"`. Extract `api_url` and `token` from the confirmed response.
 
-5. Once confirmed, write the credentials to the shell profile:
-   ```bash
-   echo 'export SCALENE_API_URL=<api_url>' >> ~/.zshrc && echo 'export SCALENE_TOKEN=<token>' >> ~/.zshrc && export SCALENE_API_URL=<api_url> && export SCALENE_TOKEN=<token>
-   ```
+Step 5 — save credentials:
+```bash
+echo 'export SCALENE_API_URL=<api_url>' >> ~/.zshrc && echo 'export SCALENE_TOKEN=<token>' >> ~/.zshrc && export SCALENE_API_URL=<api_url> && export SCALENE_TOKEN=<token>
+```
 
-6. Say "Connected!" and immediately run `/scalene sync` to import history.
+Step 6 — say "Connected!" then run the sync immediately:
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/bin/scalene-sync.py --api-url "$SCALENE_API_URL" --token "$SCALENE_TOKEN"
+```
 
 ### /scalene sync
 
