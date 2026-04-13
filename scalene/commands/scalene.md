@@ -13,18 +13,13 @@ The sync script is at `${CLAUDE_PLUGIN_ROOT}/bin/scalene-sync.py`. Credentials a
 
 ### /scalene setup
 
-CRITICAL: Do NOT ask the user to paste credentials. Do NOT show menus. Just run these commands:
+CRITICAL: Do NOT ask the user to paste credentials. Do NOT show menus. Do NOT check env vars yourself. Just run this ONE command:
 
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/bin/scalene-auth.py && source ~/.zshrc
+python3 ${CLAUDE_PLUGIN_ROOT}/bin/scalene-auth.py
 ```
 
-If it prints "Already configured", stop. Otherwise it opens the browser, waits for confirmation, and saves credentials automatically.
-
-Then sync:
-```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/bin/scalene-sync.py --api-url "$SCALENE_API_URL" --token "$SCALENE_TOKEN"
-```
+This single script handles everything: checks credentials, authenticates if needed (opens browser), saves to ~/.zshrc, and runs the sync. No other commands needed.
 
 ### /scalene sync
 
