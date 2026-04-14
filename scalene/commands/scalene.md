@@ -23,9 +23,9 @@ This single script handles everything: checks credentials, authenticates if need
 
 ### /scalene sync
 
-Run: `python3 ${CLAUDE_PLUGIN_ROOT}/bin/scalene-sync.py --api-url "$SCALENE_API_URL" --token "$SCALENE_TOKEN"`
+Run: `python3 ${CLAUDE_PLUGIN_ROOT}/bin/scalene-sync.py --bulk --api-url "$SCALENE_API_URL" --token "$SCALENE_TOKEN"`
 
-Imports all historical sessions from `~/.claude/projects/`. May take a few minutes for large histories.
+Collects all data locally, uploads in one request. Much faster than streaming.
 
 ### /scalene sync session
 
