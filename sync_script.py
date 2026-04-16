@@ -3,19 +3,22 @@
 
 Zero dependencies. Runs entirely on the developer's machine.
 
-Walks ~/.claude/projects/, extracts session metadata from JSONL files,
-and POSTs it to the Scalene API. The privacy whitelist below defines
-exactly which fields leave the machine. Everything else is dropped.
+Walks ~/.claude/projects/ and ~/.claude/telemetry/, extracts session and
+API-error metadata, and POSTs it to the Scalene API. The privacy
+whitelist below defines exactly which fields leave the machine.
+Everything else is dropped.
 
 What is exported:
     - Session: id, project path, git branch, CLI version, timestamps
     - Turn: id, type, timestamp, model, token counts, tool name
+    - API error: event id, error_type enum, attempt, duration, model
     - Identity: git user.email + user.name (for attribution)
 
 What is NEVER exported:
     - Prompt text, response text, thinking blocks
     - File contents, tool inputs, tool results
     - Any content from the conversation
+    - Email, device ID, org/account UUIDs from telemetry
 
 Usage:
     python3 sync_script.py --api-url https://scalene.example.com --token <bearer>
@@ -26,6 +29,8 @@ Audit this file: https://github.com/scaleneai/claude-code-plugin/blob/main/sync_
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import subprocess
 import sys
@@ -124,6 +129,90 @@ def _extract_turn(line: dict) -> dict | None:
     }
 
 
+# ─── Telemetry error whitelist ───────────────────────────────────────
+#
+# Mirror of scalene/agent/extractor.py::extract_error. Source is
+# ~/.claude/telemetry/1p_failed_events.*.json — Anthropic's buffered
+# telemetry file. We pull ONLY:
+#   - event_name (tengu_api_error / tengu_api_retry)
+#   - event_id (for server-side dedup)
+#   - session_id, model, client_timestamp
+#   - error_type / status / attempt / durations / provider
+#     (from base64-decoded additional_metadata, strict allow-list)
+# We drop: email, device_id, auth.{organization,account}_uuid, env,
+# process, betas, `error` free-text, clientRequestId, queryChainId.
+
+_ERROR_EVENT_NAMES = {"tengu_api_error", "tengu_api_retry"}
+_ERROR_META_WHITELIST = {
+    "errorType", "status", "attempt",
+    "durationMs", "durationMsIncludingRetries", "provider",
+}
+
+
+def _decode_error_metadata(blob) -> dict:
+    """Decode `additional_metadata` base64 → JSON and filter to whitelist.
+    Returns {} on any decode/parse failure — never raises.
+    """
+    if not isinstance(blob, str) or not blob:
+        return {}
+    try:
+        raw = base64.b64decode(blob, validate=False)
+        decoded = json.loads(raw)
+    except (binascii.Error, ValueError, json.JSONDecodeError):
+        return {}
+    if not isinstance(decoded, dict):
+        return {}
+    return {k: v for k, v in decoded.items() if k in _ERROR_META_WHITELIST}
+
+
+def _extract_error(line: dict) -> dict | None:
+    """Extract metadata-only error row from one telemetry JSONL line."""
+    if not isinstance(line, dict):
+        return None
+    if line.get("event_type") != "ClaudeCodeInternalEvent":
+        return None
+    data = line.get("event_data")
+    if not isinstance(data, dict):
+        return None
+
+    event_name = data.get("event_name")
+    if event_name not in _ERROR_EVENT_NAMES:
+        return None
+
+    event_id = data.get("event_id")
+    ts = data.get("client_timestamp")
+    if not event_id or not ts:
+        return None
+
+    meta = _decode_error_metadata(data.get("additional_metadata"))
+
+    status_raw = meta.get("status")
+    if isinstance(status_raw, (int, float)):
+        status = str(int(status_raw))
+    elif isinstance(status_raw, str) and status_raw:
+        status = status_raw
+    else:
+        status = None
+
+    def _int_or_none(v):
+        return int(v) if isinstance(v, (int, float)) else None
+
+    attempt = meta.get("attempt")
+    return {
+        "event_id": event_id,
+        "session_id": data.get("session_id") or None,
+        "event_name": event_name,
+        "timestamp": ts,
+        "model_id": data.get("model") or None,
+        "error_type": meta.get("errorType") or None,
+        "status": status,
+        "attempt": int(attempt) if isinstance(attempt, (int, float)) else 0,
+        "duration_ms": _int_or_none(meta.get("durationMs")),
+        "duration_ms_total": _int_or_none(meta.get("durationMsIncludingRetries")),
+        "provider": meta.get("provider") or None,
+    }
+
+
 # ─── File I/O ────────────────────────────────────────────────────────
 
 
@@ -144,6 +233,20 @@ def _find_session_files(root: Path):
     for project_dir in sorted(root.iterdir()):
         if project_dir.is_dir():
             yield from sorted(project_dir.rglob("*.jsonl"))
+
+
+def _find_telemetry_files(root: Path):
+    """Yield `~/.claude/telemetry/1p_failed_events.*.json` paths.
+
+    The files have a `.json` extension but each line is its own JSON
+    object (append-only JSONL), matching Anthropic's buffered-telemetry
+    format.
+    """
+    if not root.exists():
+        return
+    for path in sorted(root.glob("1p_failed_events.*.json")):
+        if path.is_file():
+            yield path
 
 
 # ─── Git identity ────────────────────────────────────────────────────
@@ -302,6 +405,44 @@ def sync(api_url: str, token: str, root: Path, session_filter: str | None = None
     return sessions_total, turns_total
 
 
+def sync_errors(api_url: str, token: str, telemetry_root: Path):
+    """Walk ~/.claude/telemetry/*.json and ship API-error events.
+
+    Idempotent: the server dedups by `event_id` so re-running is free.
+    Telemetry volume is tiny (a few events per outage), so we POST
+    everything in one payload instead of batching.
+    """
+    identity = _get_identity()
+    ingest_url = f"{api_url.rstrip('/')}/api/ingest/sessions"
+
+    files = list(_find_telemetry_files(telemetry_root))
+    if not files:
+        return 0
+
+    errors: list[dict] = []
+    seen: set[str] = set()
+    for path in files:
+        for line in _iter_jsonl(path):
+            ep = _extract_error(line)
+            if ep is None:
+                continue
+            if ep["event_id"] in seen:
+                continue
+            seen.add(ep["event_id"])
+            errors.append(ep)
+
+    if not errors:
+        return 0
+
+    payload: dict = {"sessions": [], "turns": [], "errors": errors}
+    if identity:
+        payload["agent_identity"] = identity
+    result = _post(ingest_url, token, payload)
+    upserted = result.get("errors_upserted", 0)
+    print(f"Telemetry: {len(errors)} errors scanned, {upserted} new")
+    return upserted
+
+
 def sync_history_stubs(api_url: str, token: str, history_path: Path, root: Path):
     """Import activity dates from history.jsonl for purged sessions.
 
@@ -386,7 +527,10 @@ def sync_bulk(api_url: str, token: str, root: Path):
     from datetime import datetime as _dt, timedelta as _td
 
     identity = _get_identity()
-    ingest_url = f"{api_url.rstrip('/')}/api/ingest/sessions"
+    # Chunks skip score recompute — we trigger one at the end instead of
+    # replaying ELO for every user on every chunk.
+    ingest_url = f"{api_url.rstrip('/')}/api/ingest/sessions?skip_score=1"
+    recompute_url = f"{api_url.rstrip('/')}/api/ingest/recompute-score"
     cutoff = (_dt.utcnow() - _td(days=90)).isoformat() + "Z"
 
     print("Scalene Bulk Sync (last 3 months)")
@@ -485,6 +629,16 @@ def sync_bulk(api_url: str, token: str, root: Path):
         result = _post(ingest_url, token, payload)
         sessions_total += result.get("sessions_upserted", 0)
 
+    # Phase 4: single score recompute now that every chunk has landed.
+    print()
+    print("Recomputing score...")
+    try:
+        result = _post(recompute_url, token, {})
+        if result.get("ok"):
+            print(f"  score = {result.get('score')}")
+    except Exception as exc:
+        print(f"  score recompute failed: {exc}")
+
     print()
     print(f"Done. {sessions_total} sessions, {turns_total} turns in {total_chunks} chunks.")
     if errors:
@@ -505,6 +659,16 @@ if __name__ == "__main__":
     parser.add_argument("--session-only", default=None, help="Sync a single session ID")
     parser.add_argument("--bulk", action="store_true", help="Bulk mode: collect all, upload once")
     parser.add_argument("--root", default=str(Path.home() / ".claude" / "projects"))
+    parser.add_argument(
+        "--telemetry-root",
+        default=str(Path.home() / ".claude" / "telemetry"),
+        help="Directory with Claude Code API-error telemetry files",
+    )
+    parser.add_argument(
+        "--skip-errors",
+        action="store_true",
+        help="Skip the telemetry-errors pass",
+    )
     args = parser.parse_args()
 
     if args.bulk:
@@ -514,3 +678,6 @@ if __name__ == "__main__":
         if not args.session_only:
             history = Path.home() / ".claude" / "history.jsonl"
             sync_history_stubs(args.api_url, args.token, history, Path(args.root))
+
+    if not args.skip_errors and not args.session_only:
+        sync_errors(args.api_url, args.token, Path(args.telemetry_root))
