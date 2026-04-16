@@ -31,7 +31,7 @@ def _get_credentials():
     if api_url and token:
         return api_url, token
 
-    # Device auth flow
+    # Device auth flow (RFC 8628 style)
     req = urllib.request.Request(
         f"{API}/api/cli/auth",
         method="POST",
@@ -39,16 +39,19 @@ def _get_credentials():
         headers={"Content-Type": "application/json"},
     )
     resp = json.loads(urllib.request.urlopen(req, timeout=10).read())
-    code, url = resp["code"], resp["url"]
+    user_code = resp["code"]
+    device_code = resp.get("device_code", user_code)  # compat with old servers
+    url = resp["url"]
 
-    print(f"Opening browser... confirm code: {code}")
+    print(f"Opening browser... confirm code: {user_code}")
     subprocess.run(["open", url], check=False)
 
-    for i in range(30):
-        time.sleep(2)
+    # Poll with device_code (the secret), not user_code (the display value).
+    for i in range(60):
+        time.sleep(3)
         r = json.loads(
             urllib.request.urlopen(
-                f"{API}/api/cli/poll?code={code}", timeout=10
+                f"{API}/api/cli/poll?device_code={device_code}", timeout=10
             ).read()
         )
         if r["status"] == "confirmed":
@@ -58,6 +61,9 @@ def _get_credentials():
                 f.write(f"export SCALENE_TOKEN={token}\n")
             print(f"Connected! Credentials saved to ~/.zshrc")
             return api_url, token
+        if r["status"] == "expired":
+            print("Code expired. Try again.")
+            sys.exit(1)
         if i % 5 == 0 and i > 0:
             print("Waiting for browser confirmation...")
 
