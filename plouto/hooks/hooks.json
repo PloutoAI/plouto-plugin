@@ -1,12 +1,23 @@
 {
   "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "API_URL=\"${PLOUTO_API_URL:-$SCALENE_API_URL}\"; TOKEN=\"${PLOUTO_TOKEN:-$SCALENE_TOKEN}\"; if [ -n \"$API_URL\" ] && [ -n \"$TOKEN\" ]; then BRANCH=$(git -C \"$PWD\" rev-parse --abbrev-ref HEAD 2>/dev/null || echo ''); echo \"[$(date -u +%Y-%m-%dT%H:%M:%SZ)] SessionStart $CLAUDE_SESSION_ID cwd=$PWD branch=$BRANCH\" >> $HOME/.claude/plouto.log; curl -s --max-time 10 -X POST \"$API_URL/api/ingest/event\" -H \"Authorization: Bearer $TOKEN\" -H 'Content-Type: application/json' -d \"{\\\"session_id\\\":\\\"$CLAUDE_SESSION_ID\\\",\\\"event\\\":\\\"session_started\\\",\\\"timestamp\\\":\\\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\\\",\\\"cwd\\\":\\\"$PWD\\\",\\\"git_branch\\\":\\\"$BRANCH\\\"}\" >> $HOME/.claude/plouto.log 2>&1; fi"
+          }
+        ]
+      }
+    ],
     "SessionEnd": [
       {
         "matcher": "",
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/bin/scalene-sync.py --api-url ${SCALENE_API_URL} --token ${SCALENE_TOKEN} --session-only $CLAUDE_SESSION_ID"
+            "command": "API_URL=\"${PLOUTO_API_URL:-$SCALENE_API_URL}\"; TOKEN=\"${PLOUTO_TOKEN:-$SCALENE_TOKEN}\"; if [ -n \"$API_URL\" ] && [ -n \"$TOKEN\" ]; then echo \"[$(date -u +%Y-%m-%dT%H:%M:%SZ)] SessionEnd $CLAUDE_SESSION_ID — syncing\" >> $HOME/.claude/plouto.log; for i in 1 2 3; do python3 ${CLAUDE_PLUGIN_ROOT}/bin/plouto-sync.py --api-url \"$API_URL\" --token \"$TOKEN\" --session-only $CLAUDE_SESSION_ID >> $HOME/.claude/plouto.log 2>&1 && break || { echo \"[$(date -u +%Y-%m-%dT%H:%M:%SZ)] sync attempt $i failed, retrying\" >> $HOME/.claude/plouto.log; sleep $((i*2)); }; done; fi"
           }
         ]
       }
@@ -17,7 +28,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "curl -s -X POST ${SCALENE_API_URL}/api/ingest/event -H 'Authorization: Bearer ${SCALENE_TOKEN}' -H 'Content-Type: application/json' -d '{\"session_id\": \"'$CLAUDE_SESSION_ID'\", \"event\": \"rate_limit\", \"timestamp\": \"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'\"}' > /dev/null 2>&1"
+            "command": "API_URL=\"${PLOUTO_API_URL:-$SCALENE_API_URL}\"; TOKEN=\"${PLOUTO_TOKEN:-$SCALENE_TOKEN}\"; if [ -n \"$API_URL\" ] && [ -n \"$TOKEN\" ]; then echo \"[$(date -u +%Y-%m-%dT%H:%M:%SZ)] StopFailure $CLAUDE_SESSION_ID rate_limit\" >> $HOME/.claude/plouto.log; curl -s --max-time 10 -X POST \"$API_URL/api/ingest/event\" -H \"Authorization: Bearer $TOKEN\" -H 'Content-Type: application/json' -d \"{\\\"session_id\\\":\\\"$CLAUDE_SESSION_ID\\\",\\\"event\\\":\\\"rate_limit\\\",\\\"timestamp\\\":\\\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\\\"}\" >> $HOME/.claude/plouto.log 2>&1; fi"
           }
         ]
       }

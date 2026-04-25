@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Scalene Sync — privacy-first Claude Code activity exporter.
+"""Plouto Sync — privacy-first Claude Code activity exporter.
 
 Zero dependencies. Runs entirely on the developer's machine.
 
 Walks ~/.claude/projects/ and ~/.claude/telemetry/, extracts session and
-API-error metadata, and POSTs it to the Scalene API. The privacy
+API-error metadata, and POSTs it to the Plouto API. The privacy
 whitelist below defines exactly which fields leave the machine.
 Everything else is dropped.
 
@@ -21,10 +21,10 @@ What is NEVER exported:
     - Email, device ID, org/account UUIDs from telemetry
 
 Usage:
-    python3 sync_script.py --api-url https://scalene.example.com --token <bearer>
-    python3 sync_script.py --api-url ... --token ... --session-only <id>
+    python3 plouto-sync.py --api-url https://api.plouto.ai --token <bearer>
+    python3 plouto-sync.py --api-url ... --token ... --session-only <id>
 
-Audit this file: https://github.com/scaleneai/claude-code-plugin/blob/main/sync_script.py
+Audit this file: https://github.com/scaleneai/claude-code-plugin/blob/main/plouto/bin/plouto-sync.py
 """
 
 from __future__ import annotations
@@ -328,7 +328,7 @@ def sync(api_url: str, token: str, root: Path, session_filter: str | None = None
     identity = _get_identity()
     ingest_url = f"{api_url.rstrip('/')}/api/ingest/sessions"
 
-    print("Scalene Sync")
+    print("Plouto Sync")
     print(f"  api:  {api_url}")
     print(f"  root: {root}")
     if identity:
@@ -533,7 +533,7 @@ def sync_bulk(api_url: str, token: str, root: Path):
     recompute_url = f"{api_url.rstrip('/')}/api/ingest/recompute-score"
     cutoff = (_dt.utcnow() - _td(days=90)).isoformat() + "Z"
 
-    print("Scalene Bulk Sync (last 3 months)")
+    print("Plouto Bulk Sync (last 3 months)")
     print(f"  api:  {api_url}")
     print(f"  root: {root}")
     print(f"  cutoff: {cutoff[:10]}")
@@ -652,9 +652,9 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Scalene Sync — export Claude Code metadata"
+        description="Plouto Sync — export Claude Code metadata"
     )
-    parser.add_argument("--api-url", required=True, help="Scalene API base URL")
+    parser.add_argument("--api-url", required=True, help="Plouto API base URL")
     parser.add_argument("--token", required=True, help="Bearer token for authentication")
     parser.add_argument("--session-only", default=None, help="Sync a single session ID")
     parser.add_argument("--bulk", action="store_true", help="Bulk mode: collect all, upload once")

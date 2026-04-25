@@ -3,20 +3,27 @@ name: plouto
 description: AI Engineering Intelligence
 arguments:
   - name: action
-    description: "setup = authenticate and sync, sync = import all history, sync session = current session only, status = show dashboard link"
+    description: "setup = authenticate and sync, sync = import all history, sync session = current session only, audit = run audit on current session, status = show dashboard link"
     required: true
 ---
 
 ## Instructions
 
-The sync script is at `${CLAUDE_PLUGIN_ROOT}/bin/scalene-sync.py`. Credentials are in `$SCALENE_API_URL` and `$SCALENE_TOKEN` environment variables.
+The sync script is at `${CLAUDE_PLUGIN_ROOT}/bin/plouto-sync.py`. Credentials are in `$PLOUTO_API_URL` / `$PLOUTO_TOKEN` (legacy `$SCALENE_API_URL` / `$SCALENE_TOKEN` are honored as fallbacks).
+
+When running any sync/audit command, resolve the credentials first with this prelude:
+
+```bash
+API_URL="${PLOUTO_API_URL:-$SCALENE_API_URL}"
+TOKEN="${PLOUTO_TOKEN:-$SCALENE_TOKEN}"
+```
 
 ### /plouto setup
 
 Run this ONE command. It opens the browser for OAuth login, saves the token, and syncs history:
 
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/bin/scalene-auth.py
+python3 ${CLAUDE_PLUGIN_ROOT}/bin/plouto-auth.py
 ```
 
 ### /plouto setup auth
@@ -24,24 +31,46 @@ python3 ${CLAUDE_PLUGIN_ROOT}/bin/scalene-auth.py
 Force re-authentication (clears existing credentials first):
 
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/bin/scalene-auth.py --force
+python3 ${CLAUDE_PLUGIN_ROOT}/bin/plouto-auth.py --force
 ```
 
 ### /plouto sync
 
-Run: `python3 ${CLAUDE_PLUGIN_ROOT}/bin/scalene-sync.py --bulk --api-url "$SCALENE_API_URL" --token "$SCALENE_TOKEN"`
+```bash
+API_URL="${PLOUTO_API_URL:-$SCALENE_API_URL}"
+TOKEN="${PLOUTO_TOKEN:-$SCALENE_TOKEN}"
+python3 ${CLAUDE_PLUGIN_ROOT}/bin/plouto-sync.py --bulk --api-url "$API_URL" --token "$TOKEN"
+```
 
 Collects all data locally, uploads in one request.
 
 ### /plouto sync session
 
-Run: `python3 ${CLAUDE_PLUGIN_ROOT}/bin/scalene-sync.py --api-url "$SCALENE_API_URL" --token "$SCALENE_TOKEN" --session-only $CLAUDE_SESSION_ID`
+```bash
+API_URL="${PLOUTO_API_URL:-$SCALENE_API_URL}"
+TOKEN="${PLOUTO_TOKEN:-$SCALENE_TOKEN}"
+python3 ${CLAUDE_PLUGIN_ROOT}/bin/plouto-sync.py --api-url "$API_URL" --token "$TOKEN" --session-only $CLAUDE_SESSION_ID
+```
 
 Syncs only the current session.
 
+### /plouto audit
+
+Sync the current session, then print the audit URL.
+
+```bash
+API_URL="${PLOUTO_API_URL:-$SCALENE_API_URL}"
+TOKEN="${PLOUTO_TOKEN:-$SCALENE_TOKEN}"
+python3 ${CLAUDE_PLUGIN_ROOT}/bin/plouto-sync.py --api-url "$API_URL" --token "$TOKEN" --session-only $CLAUDE_SESSION_ID
+DASHBOARD="${API_URL/api./}"
+echo "Plouto Audit: $DASHBOARD/audit"
+```
+
+Then tell the user "Your audit is ready: <DASHBOARD>/audit". If `${API_URL/api./}` produced no change (e.g. running against localhost or a dev API that doesn't sit behind `api.`), fall back to `$API_URL/audit`.
+
 ### /plouto status
 
-Print the user's dashboard URL (the base domain from `$SCALENE_API_URL` + `/me`). No sync.
+Print the user's dashboard URL: take the base domain from `$PLOUTO_API_URL` (stripping `api.` if present) and append `/me`. No sync.
 
 After any sync, tell the user their dashboard is updated.
 

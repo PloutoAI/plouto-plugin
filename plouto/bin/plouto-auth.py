@@ -29,18 +29,22 @@ TIMEOUT = 120  # seconds to wait for browser callback
 
 
 def _get_existing_credentials():
-    """Return (api_url, token) from env or ~/.zshrc, or (None, None)."""
-    api_url = os.environ.get("SCALENE_API_URL", "")
-    token = os.environ.get("SCALENE_TOKEN", "")
+    """Return (api_url, token) from env or ~/.zshrc, or (None, None).
+
+    Prefers PLOUTO_* env vars; falls back to legacy SCALENE_* for users
+    on older plugin versions.
+    """
+    api_url = os.environ.get("PLOUTO_API_URL") or os.environ.get("SCALENE_API_URL", "")
+    token = os.environ.get("PLOUTO_TOKEN") or os.environ.get("SCALENE_TOKEN", "")
     if api_url and token:
         return api_url, token
 
     zshrc = Path.home() / ".zshrc"
     if zshrc.exists():
         for line in zshrc.read_text().splitlines():
-            if line.startswith("export SCALENE_API_URL="):
+            if line.startswith("export PLOUTO_API_URL=") or line.startswith("export SCALENE_API_URL="):
                 api_url = line.split("=", 1)[1].strip()
-            if line.startswith("export SCALENE_TOKEN="):
+            if line.startswith("export PLOUTO_TOKEN=") or line.startswith("export SCALENE_TOKEN="):
                 token = line.split("=", 1)[1].strip()
     if api_url and token:
         return api_url, token
@@ -56,16 +60,47 @@ def _find_free_port() -> int:
 
 
 def _save_credentials(api_url: str, token: str) -> None:
-    """Append credentials to ~/.zshrc."""
+    """Write credentials to ~/.zshrc as PLOUTO_*. Strips legacy SCALENE_* entries too."""
     zshrc = Path.home() / ".zshrc"
-    # Remove old entries first.
     if zshrc.exists():
         lines = zshrc.read_text().splitlines()
-        lines = [l for l in lines if not l.startswith("export SCALENE_API_URL=") and not l.startswith("export SCALENE_TOKEN=")]
+        lines = [
+            l for l in lines
+            if not l.startswith("export PLOUTO_API_URL=")
+            and not l.startswith("export PLOUTO_TOKEN=")
+            and not l.startswith("export SCALENE_API_URL=")
+            and not l.startswith("export SCALENE_TOKEN=")
+        ]
         zshrc.write_text("\n".join(lines) + "\n")
     with open(zshrc, "a") as f:
-        f.write(f"export SCALENE_API_URL={api_url}\n")
-        f.write(f"export SCALENE_TOKEN={token}\n")
+        f.write(f"export PLOUTO_API_URL={api_url}\n")
+        f.write(f"export PLOUTO_TOKEN={token}\n")
+
+
+def _register_mcp_server(api_url: str, token: str) -> None:
+    """Register the Plouto MCP server in ~/.claude/settings.json.
+
+    Idempotent: replaces any existing 'plouto' entry. Preserves other keys.
+    Best-effort — failures here don't block the rest of setup.
+    """
+    settings_path = Path.home() / ".claude" / "settings.json"
+    try:
+        if settings_path.exists():
+            settings = json.loads(settings_path.read_text() or "{}")
+        else:
+            settings_path.parent.mkdir(parents=True, exist_ok=True)
+            settings = {}
+
+        servers = settings.setdefault("mcpServers", {})
+        servers["plouto"] = {
+            "type": "http",
+            "url": f"{api_url.rstrip('/')}/mcp",
+            "headers": {"Authorization": f"Bearer {token}"},
+        }
+        settings_path.write_text(json.dumps(settings, indent=2) + "\n")
+        print("MCP server registered (~/.claude/settings.json)", flush=True)
+    except Exception as exc:
+        print(f"Warning: could not register MCP server ({exc}). Skipping.", file=sys.stderr, flush=True)
 
 
 def _oauth_login() -> tuple[str, str]:
@@ -165,8 +200,11 @@ def main():
 
     print(f"API: {api_url}", flush=True)
 
+    # Register the Plouto MCP server in ~/.claude/settings.json (idempotent).
+    _register_mcp_server(api_url, token)
+
     # Run sync.
-    sync_script = Path(__file__).resolve().parent / "scalene-sync.py"
+    sync_script = Path(__file__).resolve().parent / "plouto-sync.py"
     if sync_script.exists():
         print("Syncing history...", flush=True)
         subprocess.run(
