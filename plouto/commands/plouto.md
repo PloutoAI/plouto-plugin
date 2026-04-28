@@ -3,7 +3,7 @@ name: plouto
 description: AI Engineering Intelligence
 arguments:
   - name: action
-    description: "setup = authenticate and sync, sync = import all history, sync session = current session only, audit = run audit on current session, status = show dashboard link"
+    description: "setup = authenticate and sync, sync = import all history, sync session = current session only, audit = run audit on current session, comply = clear policy gate after running /model, status = show dashboard link"
     required: true
 ---
 
@@ -67,6 +67,18 @@ echo "Plouto Audit: $DASHBOARD/audit"
 ```
 
 Then tell the user "Your audit is ready: <DASHBOARD>/audit". If `${API_URL/api./}` produced no change (e.g. running against localhost or a dev API that doesn't sit behind `api.`), fall back to `$API_URL/audit`.
+
+### /plouto comply
+
+Clear the workspace-policy gate flag for the current session. Run this after `/model <required-model>` so the user's tool calls (Edit, Write, Bash, etc.) are no longer blocked by the policy enforcer.
+
+```bash
+rm -f $HOME/.claude/plouto/policy-violation
+echo "Plouto policy gate cleared."
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] /plouto comply: gate cleared by user $CLAUDE_SESSION_ID" >> $HOME/.claude/plouto.log
+```
+
+After running this, tell the user the gate is cleared and tool calls will proceed on the model they just selected with `/model`.
 
 ### /plouto status
 

@@ -6,7 +6,22 @@
         "hooks": [
           {
             "type": "command",
-            "command": "API_URL=\"${PLOUTO_API_URL:-$SCALENE_API_URL}\"; TOKEN=\"${PLOUTO_TOKEN:-$SCALENE_TOKEN}\"; if [ -n \"$API_URL\" ] && [ -n \"$TOKEN\" ]; then BRANCH=$(git -C \"$PWD\" rev-parse --abbrev-ref HEAD 2>/dev/null || echo ''); echo \"[$(date -u +%Y-%m-%dT%H:%M:%SZ)] SessionStart $CLAUDE_SESSION_ID cwd=$PWD branch=$BRANCH\" >> $HOME/.claude/plouto.log; curl -s --max-time 10 -X POST \"$API_URL/api/ingest/event\" -H \"Authorization: Bearer $TOKEN\" -H 'Content-Type: application/json' -d \"{\\\"session_id\\\":\\\"$CLAUDE_SESSION_ID\\\",\\\"event\\\":\\\"session_started\\\",\\\"timestamp\\\":\\\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\\\",\\\"cwd\\\":\\\"$PWD\\\",\\\"git_branch\\\":\\\"$BRANCH\\\"}\" >> $HOME/.claude/plouto.log 2>&1; fi"
+            "command": "API_URL=\"${PLOUTO_API_URL:-$SCALENE_API_URL}\"; TOKEN=\"${PLOUTO_TOKEN:-$SCALENE_TOKEN}\"; if [ -n \"$API_URL\" ] && [ -n \"$TOKEN\" ]; then BRANCH=$(git -C \"$PWD\" rev-parse --abbrev-ref HEAD 2>/dev/null || echo ''); echo \"[$(date -u +%Y-%m-%dT%H:%M:%SZ)] SessionStart $CLAUDE_SESSION_ID cwd=$PWD branch=$BRANCH\" >> $HOME/.claude/plouto.log; curl -s --max-time 10 -X POST \"$API_URL/api/ingest/event\" -H \"Authorization: Bearer $TOKEN\" -H 'Content-Type: application/json' -d \"{\\\"session_id\\\":\\\"$CLAUDE_SESSION_ID\\\",\\\"event\\\":\\\"session_started\\\",\\\"timestamp\\\":\\\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\\\",\\\"cwd\\\":\\\"$PWD\\\",\\\"git_branch\\\":\\\"$BRANCH\\\"}\" > /dev/null 2>>$HOME/.claude/plouto.log; fi"
+          },
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/bin/plouto-policy.py"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/bin/plouto-gate.py"
           }
         ]
       }
